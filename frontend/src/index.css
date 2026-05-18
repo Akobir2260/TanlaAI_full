@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800;900&display=swap');
+
+@theme {
+  --font-manrope: "Manrope", sans-serif;
+
+  /* ─── Bold & Colorful Brand Palette ─── */
+  --color-primary:         #FF6B35;   /* vibrant orange */
+  --color-primary-dark:    #E8521C;
+  --color-primary-light:   #FF8C5A;
+  --color-secondary:       #1A1A2E;   /* deep navy */
+  --color-accent:          #00C9B1;   /* mint teal */
+  --color-sale:            #FF2D55;   /* hot sale red */
+  --color-gold:            #FFB800;   /* featured gold */
+  --color-surface:         #FFFFFF;
+  --color-surface-variant: #FFF8F2;   /* warm cream */
+  --color-background:      #FFFBF6;   /* off-white warm */
+  --color-on-surface:      #1A1A2E;
+  --color-outline:         #C4C4C4;
+  --color-error:           #FF2D55;
+  --color-muted:           #8A8A99;
+  --shadow-card:           0 4px 24px -4px rgba(255, 107, 53, 0.12);
+  --shadow-nav:            0 -8px 32px rgba(0, 0, 0, 0.06);
+}
+
+/* ─── Base Reset ─── */
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  font-family: 'Manrope', sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-secondary);
+
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
+body {
+  margin: 0;
+  display: flex;
+  min-width: 320px;
+  min-height: 100vh;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+#root { width: 100%; }
+
+/* ─── Scrollbar ─── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ─── Brand Gradients ─── */
+.gradient-primary   { background: linear-gradient(135deg, #FF6B35 0%, #FF2D55 100%); }
+.gradient-secondary { background: linear-gradient(135deg, #1A1A2E 0%, #2D2D4E 100%); }
+.gradient-accent    { background: linear-gradient(135deg, #00C9B1 0%, #00A896 100%); }
+.gradient-gold      { background: linear-gradient(135deg, #FFB800 0%, #FF8C00 100%); }
+.gradient-hero      { background: linear-gradient(135deg, #FF6B35 0%, #FF2D55 60%, #C0175A 100%); }
+.gradient-ai        { background: linear-gradient(135deg, #00C9B1 0%, #0096FF 100%); }
+.main-button-gradient { background: linear-gradient(135deg, #FF6B35 0%, #FF2D55 100%); }
+
+/* ─── Glassmorphism ─── */
+.glass {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* ─── Card shadows ─── */
+.card-shadow  { box-shadow: 0 2px 16px rgba(26, 26, 46, 0.06); }
+.card-shadow-lg { box-shadow: 0 8px 32px rgba(26, 26, 46, 0.10); }
+.orange-glow  { box-shadow: 0 8px 32px rgba(255, 107, 53, 0.30); }
+.teal-glow    { box-shadow: 0 8px 32px rgba(0, 201, 177, 0.30); }
+
+/* ─── Animations ─── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.8); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fade-up { animation: fadeUp 0.4s ease both; }
+
+.skeleton {
+  background: linear-gradient(90deg, #f0ede8 25%, #e8e4de 50%, #f0ede8 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 12px;
+}
+
+/* ─── Badge pill ─── */
+.badge-sale    { background: #FF2D55; color: #fff; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 20px; letter-spacing: 0.03em; }
+.badge-hot     { background: #FF6B35; color: #fff; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 20px; }
+.badge-new     { background: #00C9B1; color: #fff; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 20px; }
+
+/* ─── Section heading ─── */
+.section-title {
+  font-size: 1.25rem;
+  font-weight: 900;
+  color: #1A1A2E;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+/* ─── Active press feedback ─── */
+.press:active { transform: scale(0.96); }
