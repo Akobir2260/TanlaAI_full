@@ -60,6 +60,7 @@ DEFAULT_ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
     'tanla-ai.ardentsoft.uz',
+    'tanlaai.onrender.com',  # ← shu qatorni qo'shing
 ]
 
 DEFAULT_FRONTEND_ORIGINS = [
