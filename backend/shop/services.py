@@ -1004,17 +1004,17 @@ class AIService:
 
 
     @staticmethod
-    def edit_room_with_gpt_image_2(room_pil, mask_pil, prompt):
+    def edit_room_with_gpt_image_2(room_pil, mask_pil, prompt, door_pil=None):
         """
         Core gpt-image-2 inpainting call.
-        Handles resizing, encoding, API call and response decoding.
+        door_pil: mahsulot rasmi — 2-rasm sifatida beriladi (gpt-image-2 multi-image).
+        Model ikkala rasmni ko'radi va door_pil dagi eshikni xonaga o'rnatadi.
         Returns edited PIL image (RGB).
         """
         client = AIService.get_openai_client()
 
         w_orig, h_orig = room_pil.size
 
-        # gpt-image-2 native resolution — 2048 for maximum quality
         MAX_PX = 1536
         scale  = min(MAX_PX / w_orig, MAX_PX / h_orig, 1.0)
         if scale < 1.0:
@@ -1022,7 +1022,7 @@ class AIService:
             room_pil = room_pil.resize((w_s, h_s), Image.Resampling.LANCZOS)
             mask_pil = mask_pil.resize((w_s, h_s), Image.Resampling.NEAREST)
 
-        # Encode
+        # Xona rasmi encode
         room_buf = io.BytesIO()
         room_pil.convert("RGBA").save(room_buf, format="PNG")
         room_buf.seek(0)
@@ -1031,9 +1031,25 @@ class AIService:
         mask_pil.convert("RGBA").save(mask_buf, format="PNG")
         mask_buf.seek(0)
 
+        # Mahsulot rasmi berilgan bo'lsa — multi-image rejimi
+        if door_pil is not None:
+            door_copy = door_pil.copy()
+            door_copy.thumbnail((768, 768), Image.Resampling.LANCZOS)
+            door_buf = io.BytesIO()
+            door_copy.convert("RGBA").save(door_buf, format="PNG")
+            door_buf.seek(0)
+            image_arg = [
+                ("room.png", room_buf, "image/png"),
+                ("door.png", door_buf, "image/png"),
+            ]
+            print("[Step 4] Using multi-image mode (room + door reference)")
+        else:
+            image_arg = ("room.png", room_buf, "image/png")
+            print("[Step 4] Single-image mode (text description only)")
+
         response = client.images.edit(
             model="gpt-image-2",
-            image=("room.png",  room_buf, "image/png"),
+            image=image_arg,
             mask=("mask.png",   mask_buf, "image/png"),
             prompt=prompt,
             n=1,
@@ -1067,15 +1083,39 @@ class AIService:
 
     @staticmethod
     def build_door_replacement_prompt(product, pixel_box, image_width, image_height,
-                                       door_visual_description=None):
+                                       door_visual_description=None, has_reference_image=False):
         """
-        Build a rich, instruction-dense prompt for gpt-image-2 door replacement.
-        Injects GPT-4o's visual description of the door for maximum fidelity.
+        Build prompt for gpt-image-2 door replacement.
+        has_reference_image=True: mahsulot rasmi 2-rasm sifatida berilgan — u asosiy manba.
+        has_reference_image=False: faqat matn tavsifi bilan ishlaydi (fallback).
         """
         door_name = getattr(product, "name", "interior door")
         x1, y1, x2, y2 = sanitize_pixel_box(pixel_box, image_width, image_height)
 
-        # Extra attributes if available
+        if has_reference_image:
+            # Model 2-rasmni ko'radi — u aniq mahsulot eshigi
+            return (
+                f"You are a professional architectural photo editor. Task: door replacement.\n\n"
+                f"REFERENCE IMAGE: The SECOND image is the exact door product '{door_name}' to install. "
+                f"Copy its appearance with 100% fidelity — identical color, finish, panel layout, "
+                f"glass inserts, hardware, molding, and proportions. Do not invent or change any detail.\n\n"
+                f"EDIT ZONE: The transparent (alpha=0) mask area marks exactly where to install the door. "
+                f"Pixel box — left={x1}, top={y1}, right={x2}, bottom={y2} "
+                f"({x2-x1}px wide × {y2-y1}px tall).\n\n"
+                f"MANDATORY RULES:\n"
+                f"1. DESTROY the old door completely — remove leaf, frame, molding, arch, trim, architrave — zero traces.\n"
+                f"2. INSTALL the door from the second reference image — pixel-faithful reproduction.\n"
+                f"3. Align door base flush with the floor line.\n"
+                f"4. Match room perspective, lighting direction, and ambient warmth precisely.\n"
+                f"5. Add natural contact shadow where door base meets floor.\n"
+                f"6. Blend frame edges seamlessly into surrounding wall — no halo, no hard lines.\n"
+                f"7. KEEP everything outside the mask area PIXEL-PERFECT identical.\n"
+                f"8. Result must look like a real professional photograph.\n"
+                f"9. Door handle/knob must be on the correct side matching the room photo.\n"
+                f"10. CRITICAL: Do NOT stretch, elongate, or alter door proportions in any direction."
+            )
+
+        # Fallback: faqat matn tavsifi (mahsulot rasmi yuklanmagan holat)
         attrs = []
         for attr in ("color", "material", "style", "finish"):
             val = str(getattr(product, attr, "") or "").strip()
@@ -1094,20 +1134,18 @@ class AIService:
             f"INSTALL THIS DOOR: '{door_name}'{attr_str}{desc_block}\n"
             f"PLACEMENT: The transparent mask area marks the exact edit zone. "
             f"Pixel coordinates — left={x1}, top={y1}, right={x2}, bottom={y2}. "
-            f"Mask dimensions: {x2-x1}px wide × {y2-y1}px tall. "
-            f"The door MUST fit exactly within these dimensions — width={x2-x1}px, height={y2-y1}px.\n\n"
-            f"Approximate pixel coordinates — left={x1}, top={y1}, right={x2}, bottom={y2}.\n\n"
+            f"Mask dimensions: {x2-x1}px wide × {y2-y1}px tall.\n\n"
             f"MANDATORY RULES:\n"
-            f"1. DESTROY the old door completely — remove its leaf, frame, molding, arch, and ALL surrounding trim/architrave. Wall must be clean with zero traces of old frame.\n"
-            f"2. INSTALL the new door exactly as described above — same color, panels, finish, hardware.\n"
+            f"1. DESTROY the old door completely — remove leaf, frame, molding, arch, trim — zero traces.\n"
+            f"2. INSTALL the new door exactly as described — same color, panels, finish, hardware.\n"
             f"3. Align door base flush with the floor line.\n"
             f"4. Match room perspective, lighting direction, and ambient warmth.\n"
             f"5. Add natural contact shadow where door base meets floor.\n"
-            f"6. Blend door frame edges seamlessly into surrounding wall — no halo, no hard lines.\n"
+            f"6. Blend door frame edges seamlessly into wall — no halo, no hard lines.\n"
             f"7. KEEP everything outside the mask area PIXEL-PERFECT identical.\n"
             f"8. Result must look like a real photograph taken by a professional camera.\n"
-            f"9. Door handle/knob must be on the CORRECT side — match the original door handle position exactly as it appears in the room photo."
-            f"10. CRITICAL: Door height MUST EXACTLY match the original door proportions. ABSOLUTELY DO NOT stretch, elongate, or alter the door vertically in ANY way. Violating this will result in an incorrect output."
+            f"9. Door handle/knob must be on the CORRECT side matching the room photo.\n"
+            f"10. CRITICAL: Do NOT stretch, elongate, or alter door proportions vertically."
         )
 
     # ── Background Removal ────────────────────────────────────────────────
@@ -1302,22 +1340,36 @@ class AIService:
         else:
             print("[Step 2] ⚠️  No description — using product name only")
 
+        # ── STEP 2b: Mahsulot rasmini PIL sifatida yuklash (multi-image uchun) ──
+        door_pil_ref = None
+        if door_ref_path:
+            try:
+                door_pil_ref = PILImage.open(door_ref_path).convert("RGBA")
+                print(f"[Step 2b] ✅ Door reference image loaded: {door_pil_ref.size}")
+            except Exception as e:
+                print(f"[Step 2b] ⚠️  Door PIL load failed: {e}")
+
         # ── STEP 3: Build Mask ─────────────────────────────────────────────
         print("\n[Step 3] Building mask...")
         mask_pil = AIService.build_gpt_image_2_mask(w, h, master_box)
 
         # ── STEP 4: GPT Image 2 Edit ───────────────────────────────────────
         print("\n[Step 4] GPT Image 2 inpainting...")
-        prompt   = AIService.build_door_replacement_prompt(
+        has_ref = door_pil_ref is not None
+        prompt  = AIService.build_door_replacement_prompt(
             product, master_box, w, h,
             door_visual_description=door_description,
+            has_reference_image=has_ref,
         )
         ai_result = None
 
         try:
-            ai_result = AIService.edit_room_with_gpt_image_2(room_pil, mask_pil, prompt)
+            ai_result = AIService.edit_room_with_gpt_image_2(
+                room_pil, mask_pil, prompt, door_pil=door_pil_ref
+            )
             print("[Step 4] ✅ GPT Image 2 edit successful!")
             preview_metadata["pipeline"]["inpaint_model"] = "gpt-image-2"
+            preview_metadata["pipeline"]["reference_image_used"] = has_ref
         except Exception as e:
             print(f"WARNING: [Step 4] GPT Image 2 failed: {e}")
             preview_metadata["pipeline"]["gpt_image_2_error"] = str(e)[:300]
