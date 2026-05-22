@@ -1004,17 +1004,17 @@ class AIService:
 
 
     @staticmethod
-    def edit_room_with_gpt_image_2(room_pil, mask_pil, prompt, door_pil=None):
+    def edit_room_with_gpt_image_2(room_pil, mask_pil, prompt):
         """
         Core gpt-image-2 inpainting call.
-        door_pil: mahsulot rasmi — 2-rasm sifatida beriladi (gpt-image-2 multi-image).
-        Model ikkala rasmni ko'radi va door_pil dagi eshikni xonaga o'rnatadi.
+        Handles resizing, encoding, API call and response decoding.
         Returns edited PIL image (RGB).
         """
         client = AIService.get_openai_client()
 
         w_orig, h_orig = room_pil.size
 
+        # gpt-image-2 native resolution — 2048 for maximum quality
         MAX_PX = 1536
         scale  = min(MAX_PX / w_orig, MAX_PX / h_orig, 1.0)
         if scale < 1.0:
@@ -1022,7 +1022,7 @@ class AIService:
             room_pil = room_pil.resize((w_s, h_s), Image.Resampling.LANCZOS)
             mask_pil = mask_pil.resize((w_s, h_s), Image.Resampling.NEAREST)
 
-        # Xona rasmi encode
+        # Encode
         room_buf = io.BytesIO()
         room_pil.convert("RGBA").save(room_buf, format="PNG")
         room_buf.seek(0)
@@ -1031,25 +1031,9 @@ class AIService:
         mask_pil.convert("RGBA").save(mask_buf, format="PNG")
         mask_buf.seek(0)
 
-        # Mahsulot rasmi berilgan bo'lsa — multi-image rejimi
-        if door_pil is not None:
-            door_copy = door_pil.copy()
-            door_copy.thumbnail((768, 768), Image.Resampling.LANCZOS)
-            door_buf = io.BytesIO()
-            door_copy.convert("RGBA").save(door_buf, format="PNG")
-            door_buf.seek(0)
-            image_arg = [
-                ("room.png", room_buf, "image/png"),
-                ("door.png", door_buf, "image/png"),
-            ]
-            print("[Step 4] Using multi-image mode (room + door reference)")
-        else:
-            image_arg = ("room.png", room_buf, "image/png")
-            print("[Step 4] Single-image mode (text description only)")
-
         response = client.images.edit(
             model="gpt-image-2",
-            image=image_arg,
+            image=("room.png",  room_buf, "image/png"),
             mask=("mask.png",   mask_buf, "image/png"),
             prompt=prompt,
             n=1,
@@ -1083,39 +1067,15 @@ class AIService:
 
     @staticmethod
     def build_door_replacement_prompt(product, pixel_box, image_width, image_height,
-                                       door_visual_description=None, has_reference_image=False):
+                                       door_visual_description=None):
         """
-        Build prompt for gpt-image-2 door replacement.
-        has_reference_image=True: mahsulot rasmi 2-rasm sifatida berilgan — u asosiy manba.
-        has_reference_image=False: faqat matn tavsifi bilan ishlaydi (fallback).
+        Build a rich, instruction-dense prompt for gpt-image-2 door replacement.
+        Injects GPT-4o's visual description of the door for maximum fidelity.
         """
         door_name = getattr(product, "name", "interior door")
         x1, y1, x2, y2 = sanitize_pixel_box(pixel_box, image_width, image_height)
 
-        if has_reference_image:
-            # Model 2-rasmni ko'radi — u aniq mahsulot eshigi
-            return (
-                f"You are a professional architectural photo editor. Task: door replacement.\n\n"
-                f"REFERENCE IMAGE: The SECOND image is the exact door product '{door_name}' to install. "
-                f"Copy its appearance with 100% fidelity — identical color, finish, panel layout, "
-                f"glass inserts, hardware, molding, and proportions. Do not invent or change any detail.\n\n"
-                f"EDIT ZONE: The transparent (alpha=0) mask area marks exactly where to install the door. "
-                f"Pixel box — left={x1}, top={y1}, right={x2}, bottom={y2} "
-                f"({x2-x1}px wide × {y2-y1}px tall).\n\n"
-                f"MANDATORY RULES:\n"
-                f"1. DESTROY the old door completely — remove leaf, frame, molding, arch, trim, architrave — zero traces.\n"
-                f"2. INSTALL the door from the second reference image — pixel-faithful reproduction.\n"
-                f"3. Align door base flush with the floor line.\n"
-                f"4. Match room perspective, lighting direction, and ambient warmth precisely.\n"
-                f"5. Add natural contact shadow where door base meets floor.\n"
-                f"6. Blend frame edges seamlessly into surrounding wall — no halo, no hard lines.\n"
-                f"7. KEEP everything outside the mask area PIXEL-PERFECT identical.\n"
-                f"8. Result must look like a real professional photograph.\n"
-                f"9. Door handle/knob must be on the correct side matching the room photo.\n"
-                f"10. CRITICAL: Do NOT stretch, elongate, or alter door proportions in any direction."
-            )
-
-        # Fallback: faqat matn tavsifi (mahsulot rasmi yuklanmagan holat)
+        # Extra attributes if available
         attrs = []
         for attr in ("color", "material", "style", "finish"):
             val = str(getattr(product, attr, "") or "").strip()
@@ -1134,18 +1094,20 @@ class AIService:
             f"INSTALL THIS DOOR: '{door_name}'{attr_str}{desc_block}\n"
             f"PLACEMENT: The transparent mask area marks the exact edit zone. "
             f"Pixel coordinates — left={x1}, top={y1}, right={x2}, bottom={y2}. "
-            f"Mask dimensions: {x2-x1}px wide × {y2-y1}px tall.\n\n"
+            f"Mask dimensions: {x2-x1}px wide × {y2-y1}px tall. "
+            f"The door MUST fit exactly within these dimensions — width={x2-x1}px, height={y2-y1}px.\n\n"
+            f"Approximate pixel coordinates — left={x1}, top={y1}, right={x2}, bottom={y2}.\n\n"
             f"MANDATORY RULES:\n"
-            f"1. DESTROY the old door completely — remove leaf, frame, molding, arch, trim — zero traces.\n"
-            f"2. INSTALL the new door exactly as described — same color, panels, finish, hardware.\n"
+            f"1. DESTROY the old door completely — remove its leaf, frame, molding, arch, and ALL surrounding trim/architrave. Wall must be clean with zero traces of old frame.\n"
+            f"2. INSTALL the new door exactly as described above — same color, panels, finish, hardware.\n"
             f"3. Align door base flush with the floor line.\n"
             f"4. Match room perspective, lighting direction, and ambient warmth.\n"
             f"5. Add natural contact shadow where door base meets floor.\n"
-            f"6. Blend door frame edges seamlessly into wall — no halo, no hard lines.\n"
+            f"6. Blend door frame edges seamlessly into surrounding wall — no halo, no hard lines.\n"
             f"7. KEEP everything outside the mask area PIXEL-PERFECT identical.\n"
             f"8. Result must look like a real photograph taken by a professional camera.\n"
-            f"9. Door handle/knob must be on the CORRECT side matching the room photo.\n"
-            f"10. CRITICAL: Do NOT stretch, elongate, or alter door proportions vertically."
+            f"9. Door handle/knob must be on the CORRECT side — match the original door handle position exactly as it appears in the room photo."
+            f"10. CRITICAL: Door height MUST EXACTLY match the original door proportions. ABSOLUTELY DO NOT stretch, elongate, or alter the door vertically in ANY way. Violating this will result in an incorrect output."
         )
 
     # ── Background Removal ────────────────────────────────────────────────
@@ -1344,64 +1306,45 @@ class AIService:
         print("\n[Step 3] Building mask...")
         mask_pil = AIService.build_gpt_image_2_mask(w, h, master_box)
 
-        # ── STEP 4a: GPT Image 2 — faqat eski eshikni o'chir, devorni to'ldir ──
-        # Yangi eshikni BU YERDA CHIZMAYMIZ — faqat toza devor kerak.
-        # Haqiqiy mahsulot rasmi keyingi bosqichda OpenCV bilan qo'yiladi.
-        print("\n[Step 4a] GPT Image 2 — wall fill (old door removal)...")
-        wall_fill_prompt = (
-            "You are a professional photo retoucher. Task: door removal only.\n\n"
-            "REMOVE the door in the transparent mask area completely — "
-            "leaf, frame, molding, architrave, hinges — zero traces.\n"
-            "FILL the opening with seamless wall matching the surroundings exactly:\n"
-            "- Same paint color, sheen, and texture as the adjacent wall\n"
-            "- Continue any baseboard or skirting board at floor level\n"
-            "- No door shape, no shadow of old door — perfectly clean wall\n"
-            "KEEP everything outside the mask PIXEL-PERFECT identical.\n"
-            "Result: a room photo as if a door never existed there."
+        # ── STEP 4: GPT Image 2 Edit ───────────────────────────────────────
+        print("\n[Step 4] GPT Image 2 inpainting...")
+        prompt   = AIService.build_door_replacement_prompt(
+            product, master_box, w, h,
+            door_visual_description=door_description,
         )
-        cleaned_room_pil = None
+        ai_result = None
+
         try:
-            cleaned_room_pil = AIService.edit_room_with_gpt_image_2(
-                room_pil, mask_pil, wall_fill_prompt
-            )
-            print("[Step 4a] ✅ Wall fill successful")
-            preview_metadata["pipeline"]["wall_fill"] = "gpt-image-2"
+            ai_result = AIService.edit_room_with_gpt_image_2(room_pil, mask_pil, prompt)
+            print("[Step 4] ✅ GPT Image 2 edit successful!")
+            preview_metadata["pipeline"]["inpaint_model"] = "gpt-image-2"
         except Exception as e:
-            print(f"WARNING: [Step 4a] Wall fill failed: {e} — using TELEA fallback")
-            preview_metadata["pipeline"]["wall_fill"] = "opencv-telea"
+            print(f"WARNING: [Step 4] GPT Image 2 failed: {e}")
+            preview_metadata["pipeline"]["gpt_image_2_error"] = str(e)[:300]
 
-        # ── STEP 4b: OpenCV — haqiqiy mahsulot rasmini aniq joylashtirish ──
-        # Bu bosqich KAFOLATLANADI: har doim mijoz tanlagan eshik ko'rinadi.
-        print("\n[Step 4b] OpenCV composite — placing exact product door...")
-        if cleaned_room_pil is not None:
-            cleaned_bgr = cv2.cvtColor(np.array(cleaned_room_pil), cv2.COLOR_RGB2BGR)
-            if cleaned_bgr.shape[:2] != (h, w):
-                cleaned_bgr = cv2.resize(cleaned_bgr, (w, h), interpolation=cv2.INTER_LINEAR)
+        # ── STEP 5: Validate AI Result ─────────────────────────────────────
+
+        if ai_result is not None:
+            ai_bgr = cv2.cvtColor(np.array(ai_result), cv2.COLOR_RGB2BGR)
+            if ai_bgr.shape[:2] != (h, w):
+                ai_bgr = cv2.resize(ai_bgr, (w, h), interpolation=cv2.INTER_LINEAR)
+            ai_bgr = add_floor_contact_shadow(ai_bgr, master_box, strength=0.20)
+            cv2.imwrite(result_image_path, ai_bgr)
+            save_visualization_metadata(result_image_path, preview_metadata)
+            print(f"\n[Pipeline] ✅ AI result accepted → {result_image_path}")
+            return result_image_path
         else:
-            # gpt-image-2 fail bo'lsa — TELEA inpainting bilan devor tozalanadi
-            inpaint_box = expand_pixel_box_top_heavy(
-                master_box, w, h,
-                pad_x_ratio=0.05, pad_top_ratio=0.25, pad_bottom_ratio=0.02,
-            )
-            cleaned_bgr = remove_door_from_room_locally(room_bgr, inpaint_box)
-
-        # Mahsulot rasmiga xona yorug'ligini moslashtirish
-        lit_door_rgba = match_door_lighting_to_room(door_rgba, cleaned_bgr, master_box)
-
-        # Haqiqiy mahsulot rasmini xonaga qo'yish (alpha compositing)
-        composite = overlay_door_into_room(
-            cleaned_bgr, lit_door_rgba, master_box, add_shadow=True
-        )
-        placed_box = compute_floor_aligned_door_box(master_box, lit_door_rgba, w, h)
-        composite  = add_floor_contact_shadow(composite, placed_box, strength=0.22)
-
-        preview_metadata["pipeline"]["composite"] = "opencv"
-        preview_metadata["pipeline"]["inpaint_model"] = "hybrid"
-
-        cv2.imwrite(result_image_path, composite)
-        save_visualization_metadata(result_image_path, preview_metadata)
-        print(f"\n[Pipeline] ✅ Hybrid result saved → {result_image_path}")
-        return result_image_path
+            print("\n[Step 5] GPT Image 2 failed — OpenCV fallback...")
+            inpaint_box = expand_pixel_box_top_heavy(master_box, w, h, pad_x_ratio=0.05, pad_top_ratio=0.25, pad_bottom_ratio=0.02)
+            cleaned_room = remove_door_from_room_locally(room_bgr, inpaint_box)
+            lit_door_rgba = match_door_lighting_to_room(door_rgba, room_bgr, master_box)
+            composite = overlay_door_into_room(cleaned_room, lit_door_rgba, master_box, add_shadow=True)
+            placed_box = compute_floor_aligned_door_box(master_box, lit_door_rgba, w, h)
+            composite = add_floor_contact_shadow(composite, placed_box)
+            cv2.imwrite(result_image_path, composite)
+            save_visualization_metadata(result_image_path, preview_metadata)
+            print(f"\n[Pipeline] ✅ OpenCV fallback saved → {result_image_path}")
+            return result_image_path
 
     @staticmethod
     def refine_corners_with_mask(detected_box, wall_mask, room_bgr):
