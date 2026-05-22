@@ -1340,63 +1340,68 @@ class AIService:
         else:
             print("[Step 2] ⚠️  No description — using product name only")
 
-        # ── STEP 2b: Mahsulot rasmini PIL sifatida yuklash (multi-image uchun) ──
-        door_pil_ref = None
-        if door_ref_path:
-            try:
-                door_pil_ref = PILImage.open(door_ref_path).convert("RGBA")
-                print(f"[Step 2b] ✅ Door reference image loaded: {door_pil_ref.size}")
-            except Exception as e:
-                print(f"[Step 2b] ⚠️  Door PIL load failed: {e}")
-
         # ── STEP 3: Build Mask ─────────────────────────────────────────────
         print("\n[Step 3] Building mask...")
         mask_pil = AIService.build_gpt_image_2_mask(w, h, master_box)
 
-        # ── STEP 4: GPT Image 2 Edit ───────────────────────────────────────
-        print("\n[Step 4] GPT Image 2 inpainting...")
-        has_ref = door_pil_ref is not None
-        prompt  = AIService.build_door_replacement_prompt(
-            product, master_box, w, h,
-            door_visual_description=door_description,
-            has_reference_image=has_ref,
+        # ── STEP 4a: GPT Image 2 — faqat eski eshikni o'chir, devorni to'ldir ──
+        # Yangi eshikni BU YERDA CHIZMAYMIZ — faqat toza devor kerak.
+        # Haqiqiy mahsulot rasmi keyingi bosqichda OpenCV bilan qo'yiladi.
+        print("\n[Step 4a] GPT Image 2 — wall fill (old door removal)...")
+        wall_fill_prompt = (
+            "You are a professional photo retoucher. Task: door removal only.\n\n"
+            "REMOVE the door in the transparent mask area completely — "
+            "leaf, frame, molding, architrave, hinges — zero traces.\n"
+            "FILL the opening with seamless wall matching the surroundings exactly:\n"
+            "- Same paint color, sheen, and texture as the adjacent wall\n"
+            "- Continue any baseboard or skirting board at floor level\n"
+            "- No door shape, no shadow of old door — perfectly clean wall\n"
+            "KEEP everything outside the mask PIXEL-PERFECT identical.\n"
+            "Result: a room photo as if a door never existed there."
         )
-        ai_result = None
-
+        cleaned_room_pil = None
         try:
-            ai_result = AIService.edit_room_with_gpt_image_2(
-                room_pil, mask_pil, prompt, door_pil=door_pil_ref
+            cleaned_room_pil = AIService.edit_room_with_gpt_image_2(
+                room_pil, mask_pil, wall_fill_prompt
             )
-            print("[Step 4] ✅ GPT Image 2 edit successful!")
-            preview_metadata["pipeline"]["inpaint_model"] = "gpt-image-2"
-            preview_metadata["pipeline"]["reference_image_used"] = has_ref
+            print("[Step 4a] ✅ Wall fill successful")
+            preview_metadata["pipeline"]["wall_fill"] = "gpt-image-2"
         except Exception as e:
-            print(f"WARNING: [Step 4] GPT Image 2 failed: {e}")
-            preview_metadata["pipeline"]["gpt_image_2_error"] = str(e)[:300]
+            print(f"WARNING: [Step 4a] Wall fill failed: {e} — using TELEA fallback")
+            preview_metadata["pipeline"]["wall_fill"] = "opencv-telea"
 
-        # ── STEP 5: Validate AI Result ─────────────────────────────────────
-
-        if ai_result is not None:
-            ai_bgr = cv2.cvtColor(np.array(ai_result), cv2.COLOR_RGB2BGR)
-            if ai_bgr.shape[:2] != (h, w):
-                ai_bgr = cv2.resize(ai_bgr, (w, h), interpolation=cv2.INTER_LINEAR)
-            ai_bgr = add_floor_contact_shadow(ai_bgr, master_box, strength=0.20)
-            cv2.imwrite(result_image_path, ai_bgr)
-            save_visualization_metadata(result_image_path, preview_metadata)
-            print(f"\n[Pipeline] ✅ AI result accepted → {result_image_path}")
-            return result_image_path
+        # ── STEP 4b: OpenCV — haqiqiy mahsulot rasmini aniq joylashtirish ──
+        # Bu bosqich KAFOLATLANADI: har doim mijoz tanlagan eshik ko'rinadi.
+        print("\n[Step 4b] OpenCV composite — placing exact product door...")
+        if cleaned_room_pil is not None:
+            cleaned_bgr = cv2.cvtColor(np.array(cleaned_room_pil), cv2.COLOR_RGB2BGR)
+            if cleaned_bgr.shape[:2] != (h, w):
+                cleaned_bgr = cv2.resize(cleaned_bgr, (w, h), interpolation=cv2.INTER_LINEAR)
         else:
-            print("\n[Step 5] GPT Image 2 failed — OpenCV fallback...")
-            inpaint_box = expand_pixel_box_top_heavy(master_box, w, h, pad_x_ratio=0.05, pad_top_ratio=0.25, pad_bottom_ratio=0.02)
-            cleaned_room = remove_door_from_room_locally(room_bgr, inpaint_box)
-            lit_door_rgba = match_door_lighting_to_room(door_rgba, room_bgr, master_box)
-            composite = overlay_door_into_room(cleaned_room, lit_door_rgba, master_box, add_shadow=True)
-            placed_box = compute_floor_aligned_door_box(master_box, lit_door_rgba, w, h)
-            composite = add_floor_contact_shadow(composite, placed_box)
-            cv2.imwrite(result_image_path, composite)
-            save_visualization_metadata(result_image_path, preview_metadata)
-            print(f"\n[Pipeline] ✅ OpenCV fallback saved → {result_image_path}")
-            return result_image_path
+            # gpt-image-2 fail bo'lsa — TELEA inpainting bilan devor tozalanadi
+            inpaint_box = expand_pixel_box_top_heavy(
+                master_box, w, h,
+                pad_x_ratio=0.05, pad_top_ratio=0.25, pad_bottom_ratio=0.02,
+            )
+            cleaned_bgr = remove_door_from_room_locally(room_bgr, inpaint_box)
+
+        # Mahsulot rasmiga xona yorug'ligini moslashtirish
+        lit_door_rgba = match_door_lighting_to_room(door_rgba, cleaned_bgr, master_box)
+
+        # Haqiqiy mahsulot rasmini xonaga qo'yish (alpha compositing)
+        composite = overlay_door_into_room(
+            cleaned_bgr, lit_door_rgba, master_box, add_shadow=True
+        )
+        placed_box = compute_floor_aligned_door_box(master_box, lit_door_rgba, w, h)
+        composite  = add_floor_contact_shadow(composite, placed_box, strength=0.22)
+
+        preview_metadata["pipeline"]["composite"] = "opencv"
+        preview_metadata["pipeline"]["inpaint_model"] = "hybrid"
+
+        cv2.imwrite(result_image_path, composite)
+        save_visualization_metadata(result_image_path, preview_metadata)
+        print(f"\n[Pipeline] ✅ Hybrid result saved → {result_image_path}")
+        return result_image_path
 
     @staticmethod
     def refine_corners_with_mask(detected_box, wall_mask, room_bgr):
