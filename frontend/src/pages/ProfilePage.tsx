@@ -13,7 +13,7 @@ const ProfilePage: React.FC = () => {
   const { user: tgUser, haptic, profile, refreshProfile, viewMode, setViewMode } = useTelegram();
 
   const hasCompany = Boolean(profile?.has_company);
-  const isVerifiedSeller = profile?.role === 'COMPANY' && hasCompany && profile?.company_status === 'active';
+  const isVerifiedSeller = profile?.role === 'COMPANY' && hasCompany && (profile?.company_status === 'active' || profile?.company_status === 'trial');
 
   useEffect(() => {
     refreshProfile();
@@ -163,14 +163,14 @@ const ProfilePage: React.FC = () => {
                   <p className="text-[14px] font-black text-[#1A1A2E]">Dashboardga kirish</p>
                   <p className="text-[10px] font-bold text-[#B0B0BF] uppercase tracking-widest">
                     {isVerifiedSeller ? 'Sotuvchi paneli' : 
-                     profile?.company_status === 'review' ? 'To\'lov tekshirilmoqda' : 'Kompaniya paneli'}
+                     profile?.company_status === 'waiting_confirmation' ? 'To\'lov tekshirilmoqda' : 'Kompaniya paneli'}
                   </p>
                 </div>
               </div>
               <ChevronRight size={16} color="#C0C0CE" />
             </button>
 
-            {profile?.company_status === 'pending' && (
+            {(profile?.company_status === 'pending_payment' || profile?.company_status === 'waiting_confirmation') && (
               <button
                 onClick={() => { haptic('light'); navigate('/subscription'); }}
                 className="w-full flex items-center justify-between p-4 rounded-[20px] active:scale-[0.97] transition-transform border-2 border-dashed border-orange-200"

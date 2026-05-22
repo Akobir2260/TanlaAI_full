@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Store, Search, Percent, User, Building2,
-  LayoutDashboard, Inbox, PlusCircle, Building, CreditCard
+  LayoutDashboard, Inbox, PlusCircle, Heart, CreditCard
 } from 'lucide-react';
 import { useTelegram } from '../contexts/useTelegram';
 import { clsx, type ClassValue } from 'clsx';
@@ -13,7 +13,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 /* ── Root paths per role ──────────────────────────────────────── */
-const USER_ROOT_PATHS   = new Set(['/', '/search', '/discounts', '/companies', '/profile']);
+const USER_ROOT_PATHS   = new Set(['/', '/search', '/discounts', '/wishlist', '/profile']);
 const SELLER_ROOT_PATHS = new Set(['/creator', '/creator/leads', '/bozor', '/profile']);
 
 /* ── Nav items ────────────────────────────────────────────────── */
@@ -21,7 +21,7 @@ const userNavItems = [
   { to: '/',          icon: Store,     label: "Do'kon"  },
   { to: '/search',    icon: Search,    label: 'Qidiruv' },
   { to: '/discounts', icon: Percent,   label: 'Aksiya'  },
-  { to: '/companies', icon: Building,  label: 'Kampaniyalar' },
+  { to: '/wishlist',  icon: Heart,     label: 'Sevimli'     },
   { to: '/profile',   icon: User,      label: 'Profil'  },
 ];
 
@@ -271,7 +271,8 @@ const MainLayout: React.FC = () => {
             {profile?.role === 'COMPANY' && 
              profile.has_company && 
              !profile.company_is_vip && 
-             profile.company_status !== 'active' && 
+             profile.company_status !== 'active' &&
+             profile.company_status !== 'trial' &&
              location.pathname !== '/subscription' ? (
               <div className="px-6 py-20 flex flex-col items-center justify-center text-center">
                  {profile.company_status === 'review' || profile.company_status === 'waiting_confirmation' ? (
