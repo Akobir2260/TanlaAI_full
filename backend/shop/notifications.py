@@ -1,8 +1,21 @@
 import requests
 import logging
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _tg_session() -> requests.Session:
+    """Telegram API uchun retry bilan configured session."""
+    s = requests.Session()
+    retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
+    s.mount("https://", HTTPAdapter(max_retries=retry))
+    return s
+
+
+_TG_SESSION = _tg_session()
 
 class NotificationService:
     @staticmethod
@@ -38,7 +51,7 @@ class NotificationService:
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = _TG_SESSION.post(url, json=payload, timeout=10)
             response.raise_for_status()
             return True
         except Exception as e:
@@ -83,7 +96,7 @@ class NotificationService:
                     import json
                     data['reply_markup'] = json.dumps(reply_markup)
                 
-                response = requests.post(url, files=files, data=data, timeout=20)
+                response = _TG_SESSION.post(url, files=files, data=data, timeout=20)
                 response.raise_for_status()
                 return True
         except Exception as e:
@@ -107,7 +120,7 @@ class NotificationService:
             "longitude": float(longitude),
         }
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = _TG_SESSION.post(url, json=payload, timeout=10)
             response.raise_for_status()
             return True
         except Exception as e:
@@ -138,7 +151,7 @@ class NotificationService:
                     "parse_mode": "HTML"
                 }
                 files = {"photo": photo_file}
-                response = requests.post(url, data=payload, files=files, timeout=30)
+                response = _TG_SESSION.post(url, data=payload, files=files, timeout=30)
                 response.raise_for_status()
                 
                 data = response.json()
@@ -198,7 +211,7 @@ class NotificationService:
                 "media": json.dumps(media)
             }
             
-            response = requests.post(url, data=payload, files=files, timeout=60)
+            response = _TG_SESSION.post(url, data=payload, files=files, timeout=60)
             response.raise_for_status()
             
             data = response.json()
@@ -556,7 +569,7 @@ class NotificationService:
                 payload["reply_markup"] = reply_markup
                 
         try:
-            response = requests.post(url, json=payload, timeout=15)
+            response = _TG_SESSION.post(url, json=payload, timeout=15)
             response.raise_for_status()
             return True
         except Exception as e:

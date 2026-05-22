@@ -853,7 +853,7 @@ class AIService:
         api_key = str(getattr(settings, "OPENAI_API_KEY", "") or "").strip()
         if not api_key:
             raise ValueError("OPENAI_API_KEY settings.py da topilmadi")
-        return OpenAI(api_key=api_key)
+        return OpenAI(api_key=api_key, timeout=60.0, max_retries=2)
 
     @staticmethod
     def get_visualization_provider(default="gpt_image_2"):

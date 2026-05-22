@@ -27,3 +27,11 @@ frontend/dist/
 # Other
 *.deb
 *.tar.gz
+
+# Docker images (deploy package)
+images/
+tanlaai-deploy.tar.gz
+nginx-tanlaai.conf
+
+# Cloudflare
+cloudflared-*.deb*

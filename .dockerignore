@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.mypy_cache
+**/*.egg-info
+**/dist-info
+
+# Virtual environments
+.venv
+venv
+env
+
+# Django
+backend/db.sqlite3
+backend/staticfiles/
+backend/media/
+backend/cache/
+backend/ai_error.log
+backend/ai_debug.log
+
+# Frontend (built in Docker via Stage 1)
+frontend/node_modules/
+frontend/dist/
+
+# Secrets & local config
+backend/.env
+**/.env.local
+
+# Misc
+*.deb
+.DS_Store
+**/.DS_Store
+CLAUDE.md
+Caddyfile
+docker-compose.yml

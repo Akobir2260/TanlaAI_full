@@ -60,7 +60,10 @@ DEFAULT_ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
     'tanla-ai.ardentsoft.uz',
-    'tanlaai.onrender.com',  # ← shu qatorni qo'shing
+    'tanlaai.onrender.com',
+    '.trycloudflare.com',   # cloudflare quick tunnel uchun
+    '.ngrok-free.app',      # ngrok uchun
+    '.ngrok.io',
 ]
 
 DEFAULT_FRONTEND_ORIGINS = [
@@ -103,9 +106,15 @@ if NGROK_URL:
     CORS_ALLOWED_ORIGINS = merge_lists(CORS_ALLOWED_ORIGINS, [NGROK_URL])
     CSRF_TRUSTED_ORIGINS.append(NGROK_URL)
 
+# Telegram Mini App iframe ichida ishlaydi — ALLOWALL kerak
 X_FRAME_OPTIONS = 'ALLOWALL'
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 CSRF_USE_SESSIONS = True
+
+# Security headers (XSS, MIME sniffing)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
+REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 
 # Application definition
@@ -126,12 +135,14 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'shop.middleware.DebugAuthMiddleware',
 ]
 
 ROOT_URLCONF = 'core.urls'
@@ -162,11 +173,14 @@ WSGI_APPLICATION = 'core.wsgi.application'
 
 import dj_database_url
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default=f'sqlite:///{BASE_DIR}/db.sqlite3'
-    )
-}
+_db_config = dj_database_url.config(default='sqlite:////app/db/db.sqlite3')
+
+# SQLite: WAL mode — bir vaqtda ko'p reader, gunicorn worker lar uchun
+if _db_config.get('ENGINE') == 'django.db.backends.sqlite3':
+    _db_config.setdefault('OPTIONS', {})
+    _db_config['OPTIONS']['timeout'] = 20
+
+DATABASES = {'default': _db_config}
 
 
 # Password validation
@@ -206,6 +220,7 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 BACKEND_URL = env('BACKEND_URL', default='https://tanla-ai.ardentsoft.uz')
@@ -226,14 +241,16 @@ LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'admin_dashboard'
 LOGOUT_REDIRECT_URL = 'home'
 
-# Cookie settings for Telegram WebApp
-SESSION_COOKIE_SAMESITE = 'None'
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SAMESITE = 'None'
-CSRF_COOKIE_SECURE = True
+# Cookie settings — prodaktsiyada Telegram WebApp uchun SameSite=None, Secure=True
+# Devda (DEBUG=True) HTTP orqali ishlashi uchun Secure=False
+SESSION_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
+CSRF_COOKIE_SECURE = not DEBUG
 
 # Telegram Bot
 TELEGRAM_BOT_TOKEN = env('TELEGRAM_BOT_TOKEN')
+TELEGRAM_WEBHOOK_SECRET = env('TELEGRAM_WEBHOOK_SECRET', default='')
 # Support both singular and plural env vars for flexibility
 ADMIN_TELEGRAM_ID = env('ADMIN_TELEGRAM_ID', default='')
 ADMIN_TELEGRAM_IDS = env_list('ADMIN_TELEGRAM_IDS', default=[ADMIN_TELEGRAM_ID] if ADMIN_TELEGRAM_ID else [])
@@ -259,13 +276,16 @@ ADMIN_STATUS_COMMAND = env('ADMIN_STATUS_COMMAND', default='sudo systemctl statu
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
+        'shop.api.auth.CsrfExemptSessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 100,
+    'DEFAULT_THROTTLE_RATES': {
+        'ai_generate': '10/hour',
+    },
 }
 
 # CORS Settings
@@ -282,3 +302,38 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024  # 20MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024  # 20MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+
+# Logging — barcha output Docker logs (stdout/stderr) ga
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '[{levelname}] {asctime} {name}: {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'WARNING',
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'shop': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+    },
+}

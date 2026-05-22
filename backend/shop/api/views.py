@@ -17,6 +17,12 @@ from rest_framework import parsers, permissions, status, views, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
+
+
+class AIGenerateThrottle(AnonRateThrottle):
+    """AI vizualizatsiya: bitta foydalanuvchi/IP dan 10 ta so'rov/soat."""
+    scope = "ai_generate"
 
 from ..models import (
     AIResult,
@@ -73,23 +79,27 @@ def _auto_bg_removal(product):
     product_id = product.id
 
     def _run():
-        worker = threading.Thread(
-            target=AIService.process_product_background,
-            args=(product,),
-            daemon=True,
-        )
-        worker.start()
-        worker.join(timeout=180)  # 3-minute hard cap
-        if worker.is_alive():
-            try:
+        try:
+            worker = threading.Thread(
+                target=AIService.process_product_background,
+                args=(product,),
+                daemon=True,
+            )
+            worker.start()
+            worker.join(timeout=180)  # 3-minute hard cap
+            if worker.is_alive():
                 from shop.models import Product as _Prod
-                p = _Prod.objects.get(pk=product_id)
-                if p.ai_status == "processing":
+                p = _Prod.objects.filter(pk=product_id).first()
+                if p and p.ai_status == "processing":
                     p.ai_status = "error"
-                    p.ai_error = "Processing timeout (>180s). Try reprocess."
+                    p.ai_error = "Processing timeout (>180s)."
                     p.save(update_fields=["ai_status", "ai_error"])
-            except Exception:
-                pass
+        except Exception as exc:
+            logger.exception(f"BG removal wrapper failed for product {product_id}: {exc}")
+            from shop.models import Product as _Prod
+            _Prod.objects.filter(pk=product_id, ai_status="processing").update(
+                ai_status="error", ai_error=str(exc)[:500]
+            )
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -584,8 +594,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                 }
             )
 
-        product = serializer.save(owner=tg_user, company=company, is_active=True)
-        self._sync_product_gallery(self.request, product)
+        with transaction.atomic():
+            product = serializer.save(owner=tg_user, company=company, is_active=True)
+            self._sync_product_gallery(self.request, product)
         _auto_bg_removal(product)
 
     def perform_update(self, serializer):
@@ -660,6 +671,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         methods=["post"],
         url_path="ai-generate",
         permission_classes=[permissions.AllowAny],
+        throttle_classes=[AIGenerateThrottle],
     )
     def ai_generate(self, request, pk=None):
         product = self.get_object()
@@ -712,8 +724,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                 .lower()
             )
 
-            if provider == "gemini_direct":
-                # Gemini Direct uchun background removal shart emas — original rasmni ishlatadi
+            if provider == "gpt_image_2":
+                # GPT Image 2 uchun background removal shart emas — door rasmini GPT-4o tasvirlaydi
                 pass
             else:
                 # Boshqa providerlar uchun background removal kerak
@@ -747,31 +759,47 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         if not room_photo:
             return Response(
-                {
-                    "status": "error",
-                    "message": "Please upload a room photo.",
-                    "code": "no_photo",
-                },
+                {"status": "error", "message": "Xona rasmi yuklanmadi.", "code": "no_photo"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Fayl turi tekshiruvi
+        allowed_types = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+        content_type = getattr(room_photo, "content_type", "") or ""
+        if content_type and content_type.split(";")[0].strip() not in allowed_types:
+            return Response(
+                {"status": "error", "message": "Faqat JPG, PNG yoki WebP rasm qabul qilinadi.", "code": "invalid_type"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Fayl hajmi tekshiruvi (max 20 MB)
+        MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+        if room_photo.size > MAX_UPLOAD_BYTES:
+            return Response(
+                {"status": "error", "message": "Rasm 20 MB dan katta bo’lmasligi kerak.", "code": "file_too_large"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # O’lcham chegaralari tekshiruvi
         if product.height and product.width and user_height and user_width:
             tolerance = 5.0
             try:
+                h_val, w_val = float(user_height), float(user_width)
+                if not (0 < h_val <= 1000 and 0 < w_val <= 1000):
+                    return Response(
+                        {"status": "error", "message": "O’lchamlar 1–1000 sm oralig’ida bo’lishi kerak.", "code": "invalid_dimensions"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 if (
-                    abs(float(user_height) - float(product.height)) > tolerance
-                    or abs(float(user_width) - float(product.width)) > tolerance
+                    abs(h_val - float(product.height)) > tolerance
+                    or abs(w_val - float(product.width)) > tolerance
                 ):
                     return Response(
-                        {
-                            "status": "error",
-                            "message": "Door o‘lchamlari tanlangan mahsulotga mos kelmayapti.",
-                            "code": "dimension_mismatch",
-                        },
+                        {"status": "error", "message": "Door o’lchamlari tanlangan mahsulotga mos kelmayapti.", "code": "dimension_mismatch"},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
             except (TypeError, ValueError):
-                pass  # Fallback if dimensions are invalidly formatted
+                pass
 
         request_id = str(uuid.uuid4())
         room_dir = os.path.join(settings.MEDIA_ROOT, "ai_temp")
@@ -1181,17 +1209,11 @@ class AIResultViewSet(viewsets.ModelViewSet):
     def get_object(self):
         pk = self.kwargs.get(self.lookup_field)
         qs = self.get_queryset()
-        # Try integer id
         try:
             return qs.get(pk=int(pk))
         except (ValueError, TypeError, AIResult.DoesNotExist):
-            pass
-        # Try by image filename UUID
-        obj = qs.filter(image__icontains=str(pk)).first()
-        if obj:
-            return obj
-        from rest_framework.exceptions import NotFound
-        raise NotFound("AIResult topilmadi")
+            from rest_framework.exceptions import NotFound
+            raise NotFound("AIResult topilmadi")
 
     @action(detail=True, methods=["post"], url_path="convert-to-lead")
     def convert_to_lead(self, request, pk=None):
@@ -1705,48 +1727,104 @@ class TelegramWebhookView(views.APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request, *args, **kwargs):
-        update = request.data
-        if "callback_query" not in update:
-            return Response({"status": "ignored"})
+        # Telegram webhook secret token tekshiruvi (ixtiyoriy, lekin tavsiya etilgan)
+        webhook_secret = getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "")
+        if webhook_secret:
+            received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+            if not received or received != webhook_secret:
+                logger.warning("Webhook: invalid secret token from %s", request.META.get("REMOTE_ADDR"))
+                return Response({"status": "forbidden"}, status=403)
 
-        callback_query = update["callback_query"]
+        update = request.data
+
+        # /start komandasi
+        if "message" in update:
+            self._handle_message(update["message"])
+            return Response({"status": "ok"})
+
+        # Inline tugma bosilishi (lead status, to'lov tasdiqlash)
+        if "callback_query" in update:
+            self._handle_callback(update["callback_query"])
+            return Response({"status": "ok"})
+
+        return Response({"status": "ignored"})
+
+    def _handle_message(self, message):
+        text = message.get("text", "")
+        chat_id = str(message.get("chat", {}).get("id", ""))
+        from_user = message.get("from", {})
+        first_name = from_user.get("first_name", "")
+
+        if not text.startswith("/start") or not chat_id:
+            return
+
+        webapp_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
+        if not webapp_url:
+            return
+
+        token = settings.TELEGRAM_BOT_TOKEN
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, json={
+            "chat_id": chat_id,
+            "text": (
+                f"Assalomu alaykum, {first_name}!\n\n"
+                "🏠 <b>Tanla AI</b> — eshiklarni tanlash va xonangizda ko'rish platformasi.\n\n"
+                "✨ Xona rasmini yuklang va AI yordamida eshikni o'rnatib ko'ring!"
+            ),
+            "parse_mode": "HTML",
+            "reply_markup": {
+                "inline_keyboard": [[{
+                    "text": "🚪 Katalogga o'tish",
+                    "web_app": {"url": webapp_url},
+                }]]
+            },
+        }, timeout=10)
+
+    def _handle_callback(self, callback_query):
         data = callback_query.get("data", "")
         from_user = callback_query.get("from", {})
         tg_id = from_user.get("id")
-        
-        # Identify the admin
-        admin = TelegramUser.objects.filter(telegram_id=tg_id, role='ADMIN').first()
-        admin_ids = [str(i) for i in getattr(settings, 'ADMIN_TELEGRAM_IDS', [])]
+
+        admin = TelegramUser.objects.filter(telegram_id=tg_id, role="ADMIN").first()
+        admin_ids = [str(i) for i in getattr(settings, "ADMIN_TELEGRAM_IDS", [])]
         is_admin = bool(admin) or (str(tg_id) in admin_ids)
-        
+
+        # Lead status callback'lari (sold_/cancel_) — barcha foydalanuvchilar uchun
+        if data.startswith("sold_") or data.startswith("cancel_"):
+            action, lead_id = data.split("_", 1)
+            from ..models import LeadRequest
+            lead = LeadRequest.objects.filter(id=lead_id).first()
+            if lead:
+                lead.status = "converted" if action == "sold" else "rejected"
+                lead.save(update_fields=["status"])
+                status_text = "✅ Sotildi!" if action == "sold" else "❌ Bekor qilindi."
+                self._answer_callback(callback_query["id"], status_text)
+            return
+
+        # Admin-only: to'lov tasdiqlash/rad etish
         if not is_admin:
             self._answer_callback(callback_query["id"], "Siz admin emassiz! ❌")
-            return Response({"status": "unauthorized"})
+            return
 
         from ..payment_service import PaymentService
-        
+
         if data.startswith("pay_approve_"):
-            payment_id = data.replace("pay_approve_", "")
-            payment = Payment.objects.filter(id=payment_id).first()
+            payment = Payment.objects.filter(id=data.replace("pay_approve_", "")).first()
             if not payment:
                 self._answer_callback(callback_query["id"], "To'lov topilmadi! ❌")
             else:
                 success, msg = PaymentService.approve_payment(payment, reviewed_by_tg_user=admin)
                 self._answer_callback(callback_query["id"], msg)
                 self._update_message(callback_query, payment, "APPROVED ✅")
-                
+
         elif data.startswith("pay_reject_"):
-            payment_id = data.replace("pay_reject_", "")
-            payment = Payment.objects.filter(id=payment_id).first()
+            payment = Payment.objects.filter(id=data.replace("pay_reject_", "")).first()
             if not payment:
                 self._answer_callback(callback_query["id"], "To'lov topilmadi! ❌")
             else:
-                reason = "Telegram orqali rad etildi."
-                success, msg = PaymentService.reject_payment(payment, reason, reviewed_by_tg_user=admin)
+                success, msg = PaymentService.reject_payment(payment, "Telegram orqali rad etildi.", reviewed_by_tg_user=admin)
                 self._answer_callback(callback_query["id"], msg)
                 self._update_message(callback_query, payment, "REJECTED ❌")
-
-        return Response({"status": "ok"})
 
     def _answer_callback(self, callback_id, text):
         token = settings.TELEGRAM_BOT_TOKEN

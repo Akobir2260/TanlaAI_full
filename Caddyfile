@@ -1,0 +1,24 @@
+tanla-ai.ardentsoft.uz {
+    # Django ga proxy
+    reverse_proxy web:8000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Real-IP {remote_host}
+    }
+
+    # Gzip compression
+    encode gzip zstd
+
+    # Security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Telegram Mini App iframe uchun X-Frame-Options yo'q (ALLOWALL)
+        -Server
+    }
+
+    # Logs
+    log {
+        output stdout
+        format console
+    }
+}

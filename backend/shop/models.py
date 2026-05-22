@@ -496,12 +496,11 @@ class SystemSettings(models.Model):
     ai_provider = models.CharField(
         max_length=50,
         choices=[
-            ("gemini_direct", "Gemini Direct (Tavsiya etilgan)"),
-            ("gemini", "Gemini Imagen"),
-            ("openai", "OpenAI DALL-E"),
-            ("hybrid", "Hybrid (OpenCV)"),
+            ("gpt_image_2", "GPT Image 2 (Tavsiya etilgan)"),
+            ("hybrid", "Hybrid (OpenCV Fallback)"),
+            ("opencv", "OpenCV Only"),
         ],
-        default="gemini_direct",
+        default="gpt_image_2",
     )
     max_results_per_user = models.IntegerField(default=20)
     image_quality = models.CharField(

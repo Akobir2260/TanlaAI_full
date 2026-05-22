@@ -1,14 +1,11 @@
 """
-DALL-E 3 + GPT-4o Door Visualization.
-Proven pipeline: GPT-4o analyzes both images, DALL-E 3 generates the final result.
+GPT Image 2 Door Visualization — utility helpers and legacy entry point.
+The main pipeline lives in AIService.generate_room_preview() (services.py).
 """
 import os
 import io
 import json
 import base64
-import tempfile
-import traceback
-import requests
 from PIL import Image
 from openai import OpenAI
 from django.conf import settings
@@ -74,115 +71,10 @@ def _encode_image_for_gpt(image_path, max_size=800):
 
 def visualize_door_in_room(product, room_image_path, result_image_path, box_1000=None, override_prompt=None):
     """
-    Full Scene AI Reconstruction using GPT-4o + DALL-E 3.
-    
-    1. GPT-4o analyzes the room photo → text description
-    2. GPT-4o analyzes the door product → text description  
-    3. DALL-E 3 generates a new photorealistic room with the door installed
+    GPT Image 2 door replacement — delegates to AIService.generate_room_preview().
+    box_1000 and override_prompt are accepted for API compatibility but unused;
+    AIService handles detection and prompt building internally.
     """
-    print(f"\n🎨 === DALL-E 3 VISUALIZATION START ===")
-    
-    client = _get_openai_client()
-    
-    door_name = product.name if hasattr(product, 'name') else 'Door'
-    
-    # Get door image path
-    door_image_path = None
-    if hasattr(product, 'image_no_bg') and product.image_no_bg and product.image_no_bg.name:
-        try:
-            if os.path.exists(product.image_no_bg.path):
-                door_image_path = product.image_no_bg.path
-        except:
-            pass
-    if not door_image_path and hasattr(product, 'original_image') and product.original_image and product.original_image.name:
-        try:
-            if os.path.exists(product.original_image.path):
-                door_image_path = product.original_image.path
-        except:
-            pass
-    if not door_image_path and hasattr(product, 'image') and product.image and product.image.name:
-        try:
-            if os.path.exists(product.image.path):
-                door_image_path = product.image.path
-        except:
-            pass
-    
-    print(f"🚪 Door: {door_name}")
-    print(f"📸 Room: {room_image_path}")
-    print(f"🖼️ Door Image: {door_image_path or 'N/A'}")
-    
-    # --- Step 1: GPT-4o analyzes the room ---
-    house_desc = "modern house entrance with light walls and wooden floor"
-    try:
-        print("📝 Step 1: GPT-4o analyzing room...")
-        base64_room = _encode_image_for_gpt(room_image_path)
-        r = client.chat.completions.create(
-            model='gpt-4o',
-            messages=[{
-                'role': 'user',
-                'content': [
-                    {"type": "text", "text": "Describe this room/house entrance in detail: wall color, floor type, ceiling, curtains, furniture, lighting. Max 80 words. English only."},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_room}", "detail": "low"}}
-                ]
-            }],
-            max_tokens=150
-        )
-        house_desc = r.choices[0].message.content
-        print(f"   Room description: {house_desc[:100]}...")
-    except Exception as e:
-        print(f"   ⚠️ GPT-4o room analysis failed (using default): {e}")
-    
-    # --- Step 2: GPT-4o analyzes the door ---
-    door_desc = door_name
-    if door_image_path:
-        try:
-            print("📝 Step 2: GPT-4o analyzing door...")
-            base64_door = _encode_image_for_gpt(door_image_path)
-            r = client.chat.completions.create(
-                model='gpt-4o',
-                messages=[{
-                    'role': 'user',
-                    'content': [
-                        {"type": "text", "text": "Describe this door in detail: material, color, pattern, handle style, panel design. Max 50 words. English only."},
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_door}", "detail": "low"}}
-                    ]
-                }],
-                max_tokens=120
-            )
-            door_desc = r.choices[0].message.content
-            print(f"   Door description: {door_desc[:100]}...")
-        except Exception as e:
-            print(f"   ⚠️ GPT-4o door analysis failed (using name): {e}")
-    
-    # Simple, direct prompt — no fancy keywords that trigger AI creativity
-    prompt = (
-        f"Edit this photo of a real room. Replace the existing door with this new door: {door_desc}. "
-        f"Room context: {house_desc}. "
-        f"STRICT RULES: Keep EVERYTHING in the room EXACTLY the same — walls, floor, carpet, curtains, furniture, lighting. "
-        f"Do NOT add any new objects. Do NOT change colors or lighting. "
-        f"Place the new door where the old door was. Door must be flush with the floor. "
-        f"This is a real customer's home. No fantasy, no palace, no luxury upgrades."
-    )
-    
-    print(f"   Prompt: {prompt[:150]}...")
-    
-    res = client.images.generate(
-        model='dall-e-3',
-        prompt=prompt,
-        size='1024x1024',
-        quality='hd',
-        n=1
-    )
-    
-    url_result = res.data[0].url
-    print(f"   ✅ DALL-E 3 image URL received!")
-    
-    # Download and save
-    img_data = requests.get(url_result).content
-    with open(result_image_path, 'wb') as f:
-        f.write(img_data)
-    
-    print(f"   ✅ Saved to: {result_image_path}")
-    print(f"🎨 === DALL-E 3 VISUALIZATION COMPLETE ===\n")
-    
-    return result_image_path
+    # Lazy import avoids circular dependency (services.py imports from this module)
+    from shop.services import AIService
+    return AIService.generate_room_preview(product, room_image_path, result_image_path)
