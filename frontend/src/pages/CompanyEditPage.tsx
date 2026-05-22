@@ -150,14 +150,6 @@ const CompanyEditPage: React.FC = () => {
       errors.phone = "Format: +998XXXXXXXXX";
     }
     
-    if (!formData.telegram_link?.trim()) {
-      errors.telegram_link = "Telegram link majburiy";
-    }
-    
-    if (!formData.instagram_link?.trim()) {
-      errors.instagram_link = "Instagram link majburiy";
-    }
-    
     if (formData.youtube_link?.trim() && !isValidUrl(formData.youtube_link) && !formData.youtube_link.includes('youtube.com') && !formData.youtube_link.includes('youtu.be')) {
       errors.youtube_link = "YouTube link noto'g'ri";
     }
@@ -332,15 +324,17 @@ const CompanyEditPage: React.FC = () => {
           </h4>
           
           {renderField(
-            'telegram_link', 'Telegram', 'Kanal yoki shaxsiy profil',
+            'telegram_link', 'Telegram', 'Kanal yoki shaxsiy profil (ixtiyoriy)',
             <MessageCircle className="text-[#229ED9]" size={20} />,
-            'https://t.me/username'
+            'https://t.me/username',
+            false
           )}
-          
+
           {renderField(
-            'instagram_link', 'Instagram', 'Biznes profil',
+            'instagram_link', 'Instagram', 'Biznes profil (ixtiyoriy)',
             <Instagram className="text-[#E4405F]" size={20} />,
-            'https://instagram.com/username'
+            'https://instagram.com/username',
+            false
           )}
           
           {renderField(

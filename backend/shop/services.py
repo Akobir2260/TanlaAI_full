@@ -1052,7 +1052,7 @@ class AIService:
             mask=("mask.png",   mask_buf, "image/png"),
             prompt=prompt,
             n=1,
-            size="1024x1024",
+            size="auto",
             quality="low",
         )
 

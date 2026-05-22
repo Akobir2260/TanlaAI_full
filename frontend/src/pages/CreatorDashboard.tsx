@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { isAxiosError } from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Package, Inbox, Settings, PlusCircle, ChevronRight,
   TrendingUp, Phone, MessageCircle, Play,
@@ -93,22 +93,36 @@ const CreatorDashboard: React.FC = () => {
   const [leads, setLeads] = useState<LeadRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate  = useNavigate();
+  const location  = useLocation();
   const { haptic, setViewMode } = useTelegram();
 
   useEffect(() => {
     const fetch = async () => {
       try {
-        const [companyRes, productsRes, leadsRes] = await Promise.all([
+        const [companyRes, productsRes, leadsRes] = await Promise.allSettled([
           apiClient.get<Company>('/companies/my/'),
           apiClient.get<ApiListResponse<Product> | Product[]>('/products/my/'),
           apiClient.get<ApiListResponse<LeadRequest> | LeadRequest[]>('/leads/'),
         ]);
-        setCompany(companyRes.data);
-        setProducts(Array.isArray(productsRes.data) ? productsRes.data : productsRes.data.results ?? []);
-        setLeads(Array.isArray(leadsRes.data) ? leadsRes.data : leadsRes.data.results ?? []);
+
+        if (companyRes.status === 'fulfilled') {
+          setCompany(companyRes.value.data);
+        } else if (isAxiosError(companyRes.reason) && companyRes.reason.response?.status === 404) {
+          navigate('/');
+          return;
+        }
+
+        if (productsRes.status === 'fulfilled') {
+          const d = productsRes.value.data;
+          setProducts(Array.isArray(d) ? d : d.results ?? []);
+        }
+
+        if (leadsRes.status === 'fulfilled') {
+          const d = leadsRes.value.data;
+          setLeads(Array.isArray(d) ? d : d.results ?? []);
+        }
       } catch (err: unknown) {
         if (isAxiosError(err) && err.response?.status === 404) {
-          // If company not found, user is not a seller, redirect to home
           navigate('/');
         }
       } finally {
@@ -116,7 +130,7 @@ const CreatorDashboard: React.FC = () => {
       }
     };
     fetch();
-  }, [navigate]);
+  }, [navigate, location.key]);
 
   const newLeads = leads.filter(l => !l.is_processed).length;
 

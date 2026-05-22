@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
-from django.db import models
+from django.db import models, transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import parsers, permissions, status, views, viewsets
@@ -478,11 +478,13 @@ class ProductViewSet(viewsets.ModelViewSet):
                 {"error": "Not authenticated"}, status=status.HTTP_401_UNAUTHORIZED
             )
 
+        company = getattr(tg_user, "company", None)
+        if company is None:
+            return Response([])
+
         products = Product.objects.filter(
-            models.Q(owner_id=tg_user.id) | models.Q(company__user_id=tg_user.id)
-        ).distinct().select_related(
-            "category", "company", "owner"
-        )
+            company=company
+        ).select_related("category", "company", "owner").order_by("-created_at")
         serializer = self.get_serializer(products, many=True)
         return Response(serializer.data)
 
