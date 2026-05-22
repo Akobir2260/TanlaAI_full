@@ -52,7 +52,7 @@ const CompanyCreatePage: React.FC = () => {
         const fd = new FormData();
         Object.entries(normalizedData).forEach(([k, v]) => { if (v) fd.append(k, v); });
         fd.append('logo', logoFile);
-        await apiClient.post('companies/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+        await apiClient.post('companies/', fd);
       } else {
         await apiClient.post('companies/', normalizedData);
       }
@@ -65,10 +65,18 @@ const CompanyCreatePage: React.FC = () => {
       // Wait a tick then go to subscription page
       setTimeout(() => navigate('/subscription', { replace: true }), 500);
     } catch (error: unknown) {
-      console.error('Error creating company:', error);
       haptic('heavy');
-      const errData = (error as { response?: { data?: unknown }; message?: string });
-      alert("Kompaniya yaratishda xato: " + JSON.stringify(errData?.response?.data || errData?.message));
+      const err = error as { response?: { data?: Record<string, unknown>; status?: number }; message?: string };
+      const d = err?.response?.data;
+      let msg = "Xatolik yuz berdi. Qayta urinib ko'ring.";
+      if (d) {
+        if (typeof d.detail === 'string') msg = d.detail;
+        else if (d.name) msg = `Nom: ${d.name}`;
+        else if (d.phone) msg = `Telefon: ${d.phone}`;
+        else if (err?.response?.status === 400) msg = "Ma'lumotlarni tekshirib qayta yuboring.";
+        else if (err?.response?.status === 401) msg = "Iltimos, Telegram orqali kiring.";
+      }
+      alert(msg);
     } finally {
       setLoading(false);
     }

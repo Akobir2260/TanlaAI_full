@@ -317,23 +317,29 @@ const ProductFormPage: React.FC = () => {
 
     try {
       if (isEdit) {
-        await apiClient.patch(`/products/${id}/`, data, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
+        await apiClient.patch(`/products/${id}/`, data);
       } else {
-        await apiClient.post('/products/', data, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
+        await apiClient.post('/products/', data);
       }
       haptic('heavy');
       navigate('/creator');
     } catch (err) {
+      haptic('heavy');
       if (isAxiosError(err)) {
-        console.error('Product save error response:', JSON.stringify(err.response?.data));
+        const d = err.response?.data as Record<string, unknown> | undefined;
+        let msg = "Mahsulotni saqlashning imkoni bo'lmadi.";
+        if (d?.detail) msg = String(d.detail);
+        else if (d?.name) msg = `Nom: ${d.name}`;
+        else if (d?.category) msg = `Kategoriya: ${d.category}`;
+        else if (d?.price) msg = `Narx: ${d.price}`;
+        else if (err.response?.status === 413) msg = "Rasm juda katta (max 20MB).";
+        else if (err.response?.status === 401) msg = "Iltimos, Telegram orqali kiring.";
+        else if (err.response?.status === 400) msg = "Ma'lumotlarni tekshirib qayta yuboring.";
+        setErrorMessage(msg);
+        console.error('Product save error:', JSON.stringify(err.response?.data));
       } else {
-        console.error('Error saving product:', err);
+        setErrorMessage("Tarmoq xatosi. Internet aloqasini tekshiring.");
       }
-      setErrorMessage(getErrorMessage(err, "Mahsulotni saqlashning imkoni bo'lmadi."));
       setSubmitting(false);
     }
   };
